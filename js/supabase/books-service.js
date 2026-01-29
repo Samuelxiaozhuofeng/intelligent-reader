@@ -7,6 +7,8 @@ import { downloadEPUB } from './epub-service.js';
 import { getSessionUser } from './session.js';
 import { downloadProcessedManifest } from './processed-books-service.js';
 import { sanitizeHtml } from '../utils/sanitize.js';
+import { upsertBookProcessingJob } from './book-processing-jobs.js';
+import { computeBookIdFromUrl } from '../utils/file-hash.js';
 
 function requireClient() {
   if (!isSupabaseConfigured()) throw new Error('Supabase 未配置');
@@ -18,6 +20,21 @@ function requireClient() {
 function requireUser(user) {
   if (!user?.id) throw new Error('请先登录以启用云端同步');
   return user;
+}
+
+function normalizeImportUrl(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) throw new Error('Missing url');
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    throw new Error('链接格式不正确');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('仅支持 http/https 链接');
+  }
+  return parsed.toString();
 }
 
 function mapRemoteBook(row) {
@@ -74,6 +91,47 @@ export async function updateRemoteBook(bookId, updates) {
   const { data, error } = await supabase.from('books').update(patch).eq('user_id', user.id).eq('id', id).select('*').single();
   if (error) throw error;
   void clearCacheForBook(id);
+  return mapRemoteBook(data);
+}
+
+export async function createRemoteBookFromUrl({ url, title, language }) {
+  const supabase = requireClient();
+  const user = requireUser(await getSessionUser());
+
+  const normalizedUrl = normalizeImportUrl(url);
+  const lang = String(language || 'en').trim() || 'en';
+  const bookId = computeBookIdFromUrl(normalizedUrl);
+
+  const nowIso = new Date().toISOString();
+  const safeTitle = String(title || '').trim() || new URL(normalizedUrl).hostname || '未命名链接';
+  const storagePath = `${user.id}/${bookId}/source.url`;
+
+  const record = {
+    user_id: user.id,
+    id: bookId,
+    title: safeTitle,
+    cover: null,
+    language: lang,
+    chapter_count: null,
+    storage_path: storagePath,
+    processed_path: null,
+    file_size: null,
+    file_updated_at: nowIso,
+    processing_status: 'queued',
+    processing_progress: 0,
+    processing_stage: 'queued',
+    processing_error: null,
+    updated_at: nowIso
+  };
+
+  const { data, error } = await supabase
+    .from('books')
+    .upsert(record, { onConflict: 'user_id,id' })
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  await upsertBookProcessingJob({ bookId, language: lang, sourceUrl: normalizedUrl });
   return mapRemoteBook(data);
 }
 

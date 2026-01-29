@@ -13,11 +13,11 @@ import { hideLoading, showLoading } from '../ui/loading.js';
 import { createProcessingModal } from '../ui/processing-modal.js';
 import { escapeHtml } from '../utils/html.js';
 import { ModalManager, createAsyncChoiceModal } from '../ui/modal-manager.js';
-import { computeBookIdFromFile } from '../utils/file-hash.js';
+import { computeBookIdFromFile, computeBookIdFromUrl } from '../utils/file-hash.js';
 import { getLanguageFilter, setLanguageFilter } from '../core/language-filter.js';
 import { getSessionUser } from '../supabase/session.js';
 import { listUserEPUBs, uploadEPUB } from '../supabase/epub-service.js';
-import { updateRemoteBook } from '../supabase/books-service.js';
+import { createRemoteBookFromUrl, updateRemoteBook } from '../supabase/books-service.js';
 import { cancelBookProcessingJob, getBookProcessingJob, retryBookProcessingJob, waitForBookProcessingJob } from '../supabase/book-processing-jobs.js';
 
 let viewMode = 'grid'; // 'grid' | 'list'
@@ -59,6 +59,11 @@ export function createBookshelfController(elements) {
       if (!language || !Object.prototype.hasOwnProperty.call(SUPPORTED_LANGUAGES, language)) return null;
       return language;
     }
+  });
+
+  const urlImportModalManager = new ModalManager(elements.urlImportModal, {
+    closeOnOverlayClick: false,
+    focusTarget: elements.urlImportInput
   });
 
   function setNavigation(handlers) {
@@ -781,6 +786,126 @@ export function createBookshelfController(elements) {
     return selected;
   }
 
+  function resetUrlImportForm() {
+    if (elements.urlImportInput) elements.urlImportInput.value = '';
+    if (elements.urlImportTitle) elements.urlImportTitle.value = '';
+  }
+
+  function openUrlImportModal() {
+    if (!elements.urlImportModal) return;
+    resetUrlImportForm();
+    urlImportModalManager.open({ focusTarget: elements.urlImportInput });
+  }
+
+  function closeUrlImportModal() {
+    closeUrlImportModal();
+    resetUrlImportForm();
+  }
+
+  function normalizeImportUrl(rawUrl) {
+    const value = String(rawUrl || '').trim();
+    if (!value) throw new Error('请输入链接');
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch (error) {
+      throw new Error('链接格式不正确');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('仅支持 http/https 链接');
+    }
+    return parsed.toString();
+  }
+
+  async function handleUrlImportSubmit(event) {
+    if (event?.preventDefault) event.preventDefault();
+    const rawUrl = elements.urlImportInput?.value || '';
+    let normalizedUrl;
+    try {
+      normalizedUrl = normalizeImportUrl(rawUrl);
+    } catch (error) {
+      showNotification(error?.message || '链接格式不正确', 'error');
+      return;
+    }
+
+    const selectedLanguage = await promptImportLanguage();
+    if (!selectedLanguage) return;
+
+    try {
+      const user = await getSessionUser();
+      if (!user) {
+        showNotification('请先登录后再导入（需要云端预处理）', 'error');
+        return;
+      }
+
+      const bookId = computeBookIdFromUrl(normalizedUrl);
+      const existingBook = await getBook(bookId);
+      if (existingBook) {
+        showNotification('这本内容已经在书架中了', 'info');
+        closeUrlImportModal();
+        navigation.openBook(bookId);
+        return;
+      }
+
+      const parsedUrl = new URL(normalizedUrl);
+      const titleInput = String(elements.urlImportTitle?.value || '').trim();
+      const fallbackTitle = parsedUrl.hostname || '未命名链接';
+      const displayTitle = titleInput || fallbackTitle;
+
+      showLoading('正在解析链接并排队处理...');
+
+      await saveBook({
+        id: bookId,
+        title: displayTitle,
+        cover: null,
+        chapters: [],
+        chapterCount: 0,
+        currentChapter: 0,
+        addedAt: new Date().toISOString(),
+        lastReadAt: new Date().toISOString(),
+        language: selectedLanguage,
+        processingStatus: 'queued',
+        processingProgress: 0
+      });
+
+      const remote = await createRemoteBookFromUrl({
+        url: normalizedUrl,
+        title: displayTitle,
+        language: selectedLanguage
+      });
+
+      await saveBook({
+        id: bookId,
+        title: remote?.title || displayTitle,
+        cover: remote?.cover || null,
+        chapters: [],
+        chapterCount: 0,
+        currentChapter: 0,
+        addedAt: new Date().toISOString(),
+        lastReadAt: new Date().toISOString(),
+        language: selectedLanguage,
+        storagePath: remote?.storagePath || null,
+        storageUpdatedAt: remote?.storageUpdatedAt || new Date().toISOString(),
+        processedPath: remote?.processedPath || null,
+        processingStatus: remote?.processingStatus || 'queued',
+        processingProgress: typeof remote?.processingProgress === 'number' ? remote.processingProgress : Number(remote?.processingProgress || 0),
+        processingStage: remote?.processingStage || null,
+        processingError: remote?.processingError || null
+      });
+
+      hideLoading();
+      showNotification('已提交链接，开始云端处理…', 'success');
+      closeUrlImportModal();
+
+      await refreshBookshelf();
+      void openProcessingAndMaybeOpenBook(bookId, { title: remote?.title || displayTitle });
+    } catch (error) {
+      hideLoading();
+      console.error('Failed to import url:', error);
+      showNotification('导入失败: ' + error.message, 'error');
+    }
+  }
+
   async function handleFileImport(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -936,6 +1061,7 @@ export function createBookshelfController(elements) {
     renameModalManager.close();
     deleteModalManager.close();
     languageSelectChoice.close(null);
+    closeUrlImportModal();
     processingModal.close();
     hideContextMenu();
     hideHeaderMenu();
@@ -951,6 +1077,12 @@ export function createBookshelfController(elements) {
     elements.importBookBtn.addEventListener('click', () => elements.fileInput.click());
     elements.importBtnEmpty.addEventListener('click', () => elements.fileInput.click());
     elements.fileInput.addEventListener('change', handleFileImport);
+    elements.importUrlBtn?.addEventListener('click', openUrlImportModal);
+    elements.importUrlBtnEmpty?.addEventListener('click', openUrlImportModal);
+    elements.urlImportForm?.addEventListener('submit', handleUrlImportSubmit);
+    elements.urlImportSubmitBtn?.addEventListener('click', handleUrlImportSubmit);
+    elements.closeUrlImportBtn?.addEventListener('click', closeUrlImportModal);
+    elements.cancelUrlImportBtn?.addEventListener('click', closeUrlImportModal);
 
     elements.gridViewBtn.addEventListener('click', () => setViewMode('grid'));
     elements.listViewBtn.addEventListener('click', () => setViewMode('list'));
@@ -1009,6 +1141,10 @@ export function createBookshelfController(elements) {
         elements.fileInput?.click?.();
         return;
       }
+      if (action === 'import-url') {
+        openUrlImportModal();
+        return;
+      }
       if (action === 'settings') {
         elements.settingsBtn?.click?.();
         return;
@@ -1023,6 +1159,10 @@ export function createBookshelfController(elements) {
     });
     elements.closeLanguageSelectBtn?.addEventListener('click', () => languageSelectChoice.close(null));
     elements.cancelLanguageSelectBtn?.addEventListener('click', () => languageSelectChoice.close(null));
+
+    elements.urlImportModal?.addEventListener('click', (e) => {
+      if (e.target === elements.urlImportModal) closeUrlImportModal();
+    });
   }
 
   return {

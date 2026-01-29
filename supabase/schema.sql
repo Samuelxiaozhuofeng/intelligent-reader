@@ -76,7 +76,8 @@ create table if not exists public.book_processing_jobs (
   stage text null,
   error text null,
 
-  source_path text not null,
+  source_path text null,
+  source_url text null,
   processed_path text null,
 
   attempts integer not null default 0,
@@ -87,7 +88,12 @@ create table if not exists public.book_processing_jobs (
   updated_at timestamptz not null default now(),
 
   unique (user_id, book_id),
-  constraint book_processing_jobs_status_check check (status in ('queued', 'processing', 'done', 'error', 'cancelled'))
+  constraint book_processing_jobs_status_check check (status in ('queued', 'processing', 'done', 'error', 'cancelled')),
+  constraint book_processing_jobs_source_check check (
+    (source_path is not null and source_url is null)
+    or
+    (source_path is null and source_url is not null)
+  )
 );
 
 create index if not exists book_processing_jobs_status_idx on public.book_processing_jobs (status, updated_at asc);
@@ -142,6 +148,7 @@ returns table (
   book_id text,
   language text,
   source_path text,
+  source_url text,
   attempts integer
 )
 language plpgsql
@@ -172,7 +179,7 @@ begin
       updated_at = now()
   from candidate
   where j.id = candidate.id
-  returning j.id, j.user_id, j.book_id, j.language, j.source_path, j.attempts;
+  returning j.id, j.user_id, j.book_id, j.language, j.source_path, j.source_url, j.attempts;
 end;
 $$;
 

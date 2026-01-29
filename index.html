@@ -69,6 +69,9 @@
           <button class="btn btn-primary" id="importBookBtn">
             <span class="icon">📁</span> 上传 EPUB
           </button>
+          <button class="btn btn-secondary" id="importUrlBtn">
+            <span class="icon">🔗</span> 导入链接
+          </button>
         </div>
       </header>
 
@@ -76,6 +79,9 @@
       <div class="context-menu" id="mobileHeaderMenu" role="menu" aria-label="菜单">
         <button class="context-menu-item" data-action="import">
           <span class="icon">📁</span> <span class="menu-label">上传 EPUB</span>
+        </button>
+        <button class="context-menu-item" data-action="import-url">
+          <span class="icon">🔗</span> <span class="menu-label">导入链接</span>
         </button>
         <button class="context-menu-item" data-action="settings">
           <span class="icon">⚙️</span> <span class="menu-label">设置</span>
@@ -94,6 +100,9 @@
             <p>导入 EPUB 书籍开始您的阅读之旅</p>
             <button class="btn btn-primary btn-large" id="importBtnEmpty">
               <span class="icon">📁</span> 上传 EPUB
+            </button>
+            <button class="btn btn-secondary btn-large" id="importUrlBtnEmpty">
+              <span class="icon">🔗</span> 导入链接
             </button>
           </div>
         </div>
@@ -770,6 +779,30 @@
         </div>
         <div class="modal-footer">
           <button class="btn btn-ghost" id="cancelLanguageSelectBtn">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- URL Import Modal -->
+    <div class="modal-overlay" id="urlImportModal">
+      <div class="modal modal-small">
+        <div class="modal-header">
+          <h2>🔗 导入链接</h2>
+          <button class="btn btn-ghost btn-small" id="closeUrlImportBtn">✕</button>
+        </div>
+        <form class="modal-body" id="urlImportForm">
+          <div class="form-group">
+            <label for="urlImportInput">文章链接</label>
+            <input type="url" id="urlImportInput" placeholder="https://example.com/article" class="input" required />
+          </div>
+          <div class="form-group">
+            <label for="urlImportTitle">标题（可选）</label>
+            <input type="text" id="urlImportTitle" placeholder="留空将自动抓取标题" class="input" />
+          </div>
+        </form>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" id="cancelUrlImportBtn">取消</button>
+          <button class="btn btn-primary" id="urlImportSubmitBtn">开始导入</button>
         </div>
       </div>
     </div>

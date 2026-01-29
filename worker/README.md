@@ -3,6 +3,7 @@
 This service claims jobs from Supabase (`public.book_processing_jobs`) and produces processed reading artifacts:
 - TOC-based chapter extraction (EPUB3 `nav.xhtml`, EPUB2 `toc.ncx`)
 - Japanese (ja) SudachiPy tokenization with offsets aligned to frontend canonical text rules (SplitMode.C + sudachidict_core)
+- URL article extraction via Readability (single-chapter manifest)
 - Upload artifacts to Supabase Storage and delete the source EPUB on success
 
 ## Environment
@@ -18,6 +19,9 @@ Optional:
 - `MAX_ATTEMPTS` (default: `5`)
 - `WORKER_MODE` (`loop` | `job`, default: `loop`)
 - `MAX_JOBS` (job mode: max jobs per run, default: `1`)
+- `URL_FETCH_TIMEOUT_MS` (default: `8000`)
+- `URL_MAX_BYTES` (default: `8000000`)
+- `URL_USER_AGENT` (default: `Mozilla/5.0 (compatible; IntelligentReader/1.0)`)
 
 ## Run locally
 

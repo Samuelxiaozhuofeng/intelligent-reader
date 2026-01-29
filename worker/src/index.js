@@ -3,9 +3,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { getConfig } from './config.js';
+import { extractArticleFromUrl } from './article.js';
 import { extractChaptersByToc, extractChaptersFromSpine, extractCoverDataUrl, extractTocEntries, loadEpubFromBuffer } from './epub.js';
 import { tokenizeJapaneseCanonicalText } from './japanese.js';
 import { gzipJson } from './storage.js';
+import { fnv1a32HexFromString } from './text.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -90,12 +92,13 @@ async function setBookMetadata(ctx, userId, bookId, patch) {
   if (error) throw error;
 }
 
-async function processJob(ctx, job) {
+async function processEpubJob(ctx, job) {
   const jobId = job.id;
   const userId = job.user_id;
   const bookId = job.book_id;
   const language = (job.language || 'en').toString().trim().toLowerCase();
   const sourcePath = job.source_path;
+  if (!sourcePath) throw new Error('Missing source_path');
 
   const processedManifestPath = `${userId}/${bookId}/processed/manifest.json.gz`;
 
@@ -207,6 +210,105 @@ async function processJob(ctx, job) {
     await updateBookFields(ctx, userId, bookId, { status: 'error', progress: job.progress || 0, stage: 'error', error: message, processedPath: processedManifestPath }).catch(() => { });
     throw error;
   }
+}
+
+async function processUrlJob(ctx, job) {
+  const jobId = job.id;
+  const userId = job.user_id;
+  const bookId = job.book_id;
+  const language = (job.language || 'en').toString().trim().toLowerCase();
+  const sourceUrl = String(job.source_url || '').trim();
+
+  if (!sourceUrl) throw new Error('Missing source_url');
+
+  const processedManifestPath = `${userId}/${bookId}/processed/manifest.json.gz`;
+
+  const stage = async (progress, stageName) => {
+    await updateJob(ctx, jobId, { status: 'processing', progress, stage: stageName, error: null, processedPath: processedManifestPath });
+    await updateBookFields(ctx, userId, bookId, { status: 'processing', progress, stage: stageName, error: null, processedPath: processedManifestPath });
+  };
+
+  try {
+    await stage(6, 'validate-url');
+    const article = await extractArticleFromUrl(sourceUrl, {
+      timeoutMs: ctx.config.urlFetchTimeoutMs,
+      maxBytes: ctx.config.urlMaxBytes,
+      userAgent: ctx.config.urlUserAgent
+    });
+
+    await stage(language === 'ja' ? 30 : 70, language === 'ja' ? 'tokenize-ja' : 'build-manifest');
+
+    const chapterId = `url-${fnv1a32HexFromString(sourceUrl)}`;
+    const manifest = {
+      version: '1',
+      bookId,
+      title: (article.title || '').trim(),
+      language,
+      cover: null,
+      tocKind: 'url',
+      chapters: []
+    };
+
+    const chapterEntry = {
+      id: chapterId,
+      title: article.title || 'Untitled',
+      content: article.content || '',
+      rawHtml: article.rawHtml || ''
+    };
+
+    if (language === 'ja') {
+      const tokenized = await tokenizeJapaneseCanonicalText(chapterEntry.content);
+      const tokensPath = `${userId}/${bookId}/processed/tokens/${chapterId}.json.gz`;
+      const tokenPayload = {
+        version: '1',
+        bookId,
+        chapterId: chapterEntry.id,
+        textHash: tokenized.textHash,
+        tokenizer: tokenized.tokenizer,
+        tokens: tokenized.tokens
+      };
+      await uploadStorageObject(ctx, tokensPath, gzipJson(tokenPayload), 'application/gzip');
+      chapterEntry.textHash = tokenized.textHash;
+      chapterEntry.tokensPath = tokensPath;
+    }
+
+    manifest.chapters.push(chapterEntry);
+
+    await stage(92, 'upload-manifest');
+    await uploadStorageObject(ctx, processedManifestPath, gzipJson(manifest), 'application/gzip');
+
+    await stage(98, 'finalize');
+    /** @type {any} */
+    const metadataPatch = {
+      cover: null,
+      chapter_count: manifest.chapters.length,
+      processed_path: processedManifestPath,
+      processing_status: 'ready',
+      processing_progress: 100,
+      processing_stage: 'done',
+      processing_error: null,
+      processed_at: new Date().toISOString()
+    };
+    if (manifest.title) metadataPatch.title = manifest.title;
+
+    await setBookMetadata(ctx, userId, bookId, metadataPatch);
+
+    await updateJob(ctx, jobId, { status: 'done', progress: 100, stage: 'done', error: null, processedPath: processedManifestPath });
+    await updateBookFields(ctx, userId, bookId, { status: 'ready', progress: 100, stage: 'done', error: null, processedPath: processedManifestPath, didDeleteSource: false });
+  } catch (error) {
+    const message = error?.message || String(error);
+    await updateJob(ctx, jobId, { status: 'error', progress: job.progress || 0, stage: 'error', error: message, processedPath: processedManifestPath }).catch(() => { });
+    await updateBookFields(ctx, userId, bookId, { status: 'error', progress: job.progress || 0, stage: 'error', error: message, processedPath: processedManifestPath }).catch(() => { });
+    throw error;
+  }
+}
+
+async function processJob(ctx, job) {
+  if (job?.source_url) {
+    await processUrlJob(ctx, job);
+    return;
+  }
+  await processEpubJob(ctx, job);
 }
 
 async function claimOneJob(ctx) {

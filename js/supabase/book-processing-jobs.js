@@ -13,15 +13,18 @@ function requireUser(user) {
   return user;
 }
 
-export async function upsertBookProcessingJob({ bookId, language, sourcePath }) {
+export async function upsertBookProcessingJob({ bookId, language, sourcePath, sourceUrl }) {
   const supabase = requireClient();
   const user = requireUser(await getSessionUser());
 
   const id = String(bookId || '').trim();
   if (!id) throw new Error('Missing bookId');
   const lang = String(language || 'en').trim() || 'en';
-  const src = String(sourcePath || '').trim();
-  if (!src) throw new Error('Missing sourcePath');
+  const srcPath = String(sourcePath || '').trim();
+  const srcUrl = String(sourceUrl || '').trim();
+  const hasPath = Boolean(srcPath);
+  const hasUrl = Boolean(srcUrl);
+  if (hasPath === hasUrl) throw new Error('Provide exactly one of sourcePath or sourceUrl');
 
   const nowIso = new Date().toISOString();
   const row = {
@@ -32,7 +35,8 @@ export async function upsertBookProcessingJob({ bookId, language, sourcePath }) 
     progress: 0,
     stage: 'queued',
     error: null,
-    source_path: src,
+    source_path: hasPath ? srcPath : null,
+    source_url: hasUrl ? srcUrl : null,
     processed_path: null,
     updated_at: nowIso
   };
@@ -140,4 +144,3 @@ export async function waitForBookProcessingJob(bookId, { onUpdate = null, timeou
     await new Promise((r) => setTimeout(r, 1200));
   }
 }
-

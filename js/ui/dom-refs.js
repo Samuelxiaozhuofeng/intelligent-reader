@@ -15,6 +15,8 @@ export const elements = {
   emptyBookshelf: document.getElementById('emptyBookshelf'),
   importBookBtn: document.getElementById('importBookBtn'),
   importBtnEmpty: document.getElementById('importBtnEmpty'),
+  importUrlBtn: document.getElementById('importUrlBtn'),
+  importUrlBtnEmpty: document.getElementById('importUrlBtnEmpty'),
   gridViewBtn: document.getElementById('gridViewBtn'),
   listViewBtn: document.getElementById('listViewBtn'),
   languageTabs: document.getElementById('languageTabs'),
@@ -55,6 +57,15 @@ export const elements = {
 
   // File input
   fileInput: document.getElementById('fileInput'),
+
+  // URL Import Modal
+  urlImportModal: document.getElementById('urlImportModal'),
+  urlImportForm: document.getElementById('urlImportForm'),
+  urlImportInput: document.getElementById('urlImportInput'),
+  urlImportTitle: document.getElementById('urlImportTitle'),
+  closeUrlImportBtn: document.getElementById('closeUrlImportBtn'),
+  cancelUrlImportBtn: document.getElementById('cancelUrlImportBtn'),
+  urlImportSubmitBtn: document.getElementById('urlImportSubmitBtn'),
 
   // Auth Modal
   authModal: document.getElementById('authModal'),
